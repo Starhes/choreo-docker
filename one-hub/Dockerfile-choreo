@@ -1,0 +1,49 @@
+# Stage 1: Build the frontend from the one-hub repository
+FROM node:18 as builder
+
+# Install git to clone the repository
+RUN apt-get update && apt-get install -y git
+
+WORKDIR /build
+
+# Clone the one-hub repository into the current directory
+RUN git clone https://github.com/MartialBE/one-hub .
+
+# Install dependencies using the lockfile from the repository
+RUN yarn --frozen-lockfile
+
+# Copy the VERSION file from the local build context. 
+# This file is still needed for the build process.
+COPY ./VERSION .
+
+# Build the frontend. Source files are from the cloned repo.
+RUN DISABLE_ESLINT_PLUGIN='true' VITE_APP_VERSION=$(cat VERSION) npm run build
+
+# Stage 2: Build the Go backend (No changes here)
+FROM golang:1.24.2 AS builder2
+
+ENV GO111MODULE=on \
+    CGO_ENABLED=1 \
+    GOOS=linux
+
+WORKDIR /build
+ADD go.mod go.sum ./
+RUN go mod download
+COPY . .
+# Copy the built frontend from the first stage
+COPY --from=builder /build/build ./web/build
+RUN go build -ldflags "-s -w -X 'one-api/common.Version=$(cat VERSION)' -extldflags '-static'" -o one-api
+
+# Stage 3: Create the final image (No changes here)
+FROM alpine
+
+RUN apk update \
+    && apk upgrade \
+    && apk add --no-cache ca-certificates tzdata \
+    && update-ca-certificates 2>/dev/null || true
+
+COPY --from=builder2 /build/one-api /
+EXPOSE 3000
+WORKDIR /data
+USER 10014
+ENTRYPOINT ["/one-api"]
