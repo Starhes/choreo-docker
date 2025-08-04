@@ -7,8 +7,8 @@ RUN git clone --depth 1 https://github.com/tbphp/gpt-load.git .
 FROM node:20-alpine AS builder
 
 ARG VERSION=1.0.0
+COPY ./web ./build
 WORKDIR /build
-COPY ./web .
 RUN npm install
 RUN VITE_VERSION=${VERSION} npm run build
 
