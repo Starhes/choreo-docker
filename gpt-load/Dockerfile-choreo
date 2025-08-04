@@ -1,43 +1,68 @@
-# Stage 0: Clone the source code from GitHub
-FROM alpine:latest AS cloner
-RUN apk add --no-cache git
-WORKDIR /source
-RUN git clone --depth 1 https://github.com/tbphp/gpt-load.git .
-
+# 第一阶段：构建前端 (Node.js)
 FROM node:20-alpine AS builder
 
+# 定义版本号参数
 ARG VERSION=1.0.0
-COPY ./web ./build
+
+# 设置工作目录
 WORKDIR /build
+
+# 安装 git 并克隆 GitHub 仓库代码到当前目录
+# --depth 1 表示只克隆最新的 commit，可以加快下载速度
+RUN apk add --no-cache git && \
+    git clone --depth 1 https://github.com/tbphp/gpt-load.git .
+
+# 进入前端代码目录 /build/web
+WORKDIR /build/web
+
+# 安装依赖并构建前端项目
 RUN npm install
 RUN VITE_VERSION=${VERSION} npm run build
 
 
+# 第二阶段：构建后端 (Go)
 FROM golang:alpine AS builder2
 
+# 定义版本号参数和 Go 编译所需的环境变量
 ARG VERSION=1.0.0
 ENV GO111MODULE=on \
     CGO_ENABLED=0 \
     GOOS=linux
 
+# 设置工作目录
 WORKDIR /build
 
-ADD go.mod go.sum ./
+# 同样，安装 git 并克隆仓库代码
+RUN apk add --no-cache git && \
+    git clone --depth 1 https://github.com/tbphp/gpt-load.git .
+
+# 下载 Go 模块依赖
 RUN go mod download
 
-COPY . .
-COPY --from=builder /build/dist ./web/dist
+# 从第一阶段(builder)复制已经构建好的前端静态文件
+# 注意路径要更新为 /build/web/dist
+COPY --from=builder /build/web/dist ./web/dist
+
+# 编译 Go 主程序，并注入版本号
 RUN go build -ldflags "-s -w -X gpt-load/internal/version.Version=${VERSION}" -o gpt-load
 
 
+# 第三阶段：创建最终的运行镜像
 FROM alpine
 
+# 设置工作目录
 WORKDIR /app
+
+# 更新系统并安装必要的依赖（证书和时区数据）
 RUN apk upgrade --no-cache \
     && apk add --no-cache ca-certificates tzdata \
     && update-ca-certificates
 
+# 从第二阶段(builder2)复制编译好的 Go 程序到当前目录
 COPY --from=builder2 /build/gpt-load .
+
+# 暴露端口
 EXPOSE 3001
 USER 10014
+# 设置容器启动命令
 ENTRYPOINT ["/app/gpt-load"]
